@@ -10,6 +10,8 @@ knitr::opts_chunk$set(echo = TRUE)
 setwd("C:/Users/Kurt/Box Sync/Env_Null_AmerInd")
 ```
 
+This supplemental material is from The Environmental Null: Documenting the Changing Influence of Physical and Social Environments on Prehistoric Andean Diets. The corresponding author, Kurt M. Wilson, may be contacted at [kurt.wilson@utah.edu](mailto:kurt.wilson@utah.edu). The code below is the complete code to rerun the analyses performed in the manuscript. 
+
 #Load packages used in this data creation and analysis
 ```{r load packages, message=FALSE, warning=FALSE}
 #autocorrelation and collinearity
