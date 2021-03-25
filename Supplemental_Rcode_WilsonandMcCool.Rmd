@@ -1261,7 +1261,7 @@ summary(LHNgam)
 ```
 
 Check for collinearity problems among the LH individuals with Carbon values
-```{r lip c collinearity}
+```{r lh c collinearity}
 #before calculate this reduce dataset to only those with N or C
 LH_C <- subset(dat.lh, !is.na(dat.lh$C.b.coll.))#leave out individuals with NA for C bone coll
 
