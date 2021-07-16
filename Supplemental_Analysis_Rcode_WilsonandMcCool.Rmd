@@ -1,0 +1,1297 @@
+---
+title: "Supplemental Analysis Code"
+author: "Kurt Wilson"
+date: "3/25/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("C:/Users/Kurt/Box Sync/Env_Null_AmerInd")
+```
+
+This supplemental material is from The Environmental Null: Documenting the Changing Influence of Physical and Social Environments on Prehistoric Andean Diets by Kurt M. Wilson and Weston C. McCool. The corresponding author, Kurt M. Wilson, may be contacted at [kurt.wilson@utah.edu](mailto:kurt.wilson@utah.edu). The code below is the complete code to rerun the analyses performed in the manuscript. 
+
+### Load packages used in this data creation and analysis
+```{r load packages, message=FALSE, warning=FALSE}
+#autocorrelation and collinearity
+  library(ape)
+  library(corrplot)
+
+#gam
+  library(mgcv)
+
+#load color libraries
+  library(viridis)
+  library(scales)
+
+#boot to calculate inverse of logit
+  library(boot)
+
+#weighted row mean and sd
+  library(matrixStats)
+
+#for mapping
+library(maps)       # Provides functions that let us plot the maps
+library(mapdata)    # Contains the hi-resolution points that mark out the countries. 
+library(raster)#mapping and working with spatial data
+library(rgdal)#mapping and shapefile reading
+library(ncdf4)#working with netcdf files
+library(maptools)#mapping
+library(sf)#shapefile reading and analysis
+library(sp)#shapefile reading and analysis
+library(rgeos)
+library(spatstat) #enables creating owin object required for the stkde function in rcarbon
+library(GISTools)
+
+
+```
+
+### Importing the data
+All of the data for this analysis is available in the supplemental data file for Wilson et al. (submitted). The data may be downloaded as a csv. Once the csv file is downloaded, proceed with the code below.
+
+Read in the csv data file - this file is available as a supplement to the article "Climate, not Population Size, is the Primary Influence of Homogenizing Dietary Variation in the Prehispanic Central Andes" by Wilson et al (submitted to *Science Advances*). This file has the data required for this analysis and some extra individuals we need to drop out.
+```{r dat new}
+dat <- read.csv("Supplemental_Data_File_2_analysis_data.csv")
+
+#Subset the data to keep only the individuals from our periods of interest
+dat <- dat[which(dat$Period == "Early Intermediate Period" | dat$Period == "Middle Horizon" | dat$Period == "Late Intermediate Period" | dat$Period == "Late Horizon"),] #1601 individuals
+
+```
+
+Set up the individual dataframes for analyzing by time period.
+```{r dat}
+
+#Make sure elevation is reading as a numeric variable
+dat$elevation <- as.numeric(dat$elevation)
+
+#Set site.id as a factor so it may be used as a random effect in the GAM analyses
+dat$Site.ID <- as.factor(dat$Site.ID)
+
+#Generate tables for each time period
+dat.eip <- dat[which(dat$Period == 'Early Intermediate Period'),] #321 individuals
+dat.mh <- dat[which(dat$Period == 'Middle Horizon'),] #398 individuals
+dat.lip <- dat[which(dat$Period == 'Late Intermediate Period'),] #625 individuals
+dat.lh <- dat[which(dat$Period == 'Late Horizon'),] #257 individuals
+
+dat.all <- dat
+
+
+```
+
+Let's check if duration has an influence on the dependent variables (N & C)
+```{r check duration}
+#calculate the time window size for each individual
+duration <- dat.all$Start.BP - dat.all$End.BP
+
+#add this to our dat dataframe
+dat.all <- cbind(dat.all, duration)
+
+#subset the dataframe for nitrogen and carbon
+dat.all.n <- dat.all[!is.na(dat.all$N.b.coll.),]
+dat.all.c <- dat.all[!is.na(dat.all$C.b.coll.),]
+
+#plot the relationship between time window size and nitrogen or carbon value
+par(mfrow = c(1,2))
+plot(dat.all.n$N.b.coll.~dat.all.n$duration, ylab = "Nitrogen per mil", xlab = "Length of Temporal Window (yrs)")
+
+plot(dat.all.c$C.b.coll.~dat.all.c$duration, ylab = "Carbon per mil", xlab = "Length of Temporal Window (yrs)")
+```
+\
+These plots show no signs of consistent patterning in length of time window and dietary isotope. Duration is not having an influence
+
+### Generate summary statistics
+
+First, make subsets for each time period and isotope
+```{r summary stats}
+
+#Generate subsets of the data for individuals with C and individuals with N by each time period
+LH_C <- subset(dat.lh, !is.na(dat.lh$C.b.coll.))#leave out individuals with NA for N bone coll
+LH_N <- subset(dat.lh, !is.na(dat.lh$N.b.coll.))#leave out individuals with NA for N bone coll
+
+LIP_C <- subset(dat.lip, !is.na(dat.lip$C.b.coll.))#leave out individuals with NA for N bone coll
+LIP_N <- subset(dat.lip, !is.na(dat.lip$N.b.coll.))#leave out individuals with NA for N bone coll
+
+MH_C <- subset(dat.mh, !is.na(dat.mh$C.b.coll.))#leave out individuals with NA for N bone coll
+MH_N <- subset(dat.mh, !is.na(dat.mh$N.b.coll.))#leave out individuals with NA for N bone coll
+
+EIP_C <- subset(dat.eip, !is.na(dat.eip$C.b.coll.))#leave out individuals with NA for N bone coll
+EIP_N <- subset(dat.eip, !is.na(dat.eip$N.b.coll.))#leave out individuals with NA for N bone coll
+
+```
+
+Calculate mean, median, and standard deviation of Nitrogen and Carbon for the EIP
+```{r}
+median(EIP_N$N.b.coll.) 
+mean(EIP_N$N.b.coll.) 
+sd(EIP_N$N.b.coll.)
+median(EIP_C$C.b.coll.) 
+mean(EIP_C$C.b.coll.)
+sd(EIP_C$C.b.coll.)
+
+#Calculate the number of sites for the EIP
+sites.EIPN <- unique(EIP_N$Site.ID)
+length(sites.EIPN)
+sites.EIPC <- unique(EIP_C$Site.ID)
+length(sites.EIPC)
+
+```
+Calculate mean, median, and standard deviation of Nitrogen and Carbon for the MH
+```{r}
+median(MH_N$N.b.coll.) 
+mean(MH_N$N.b.coll.) 
+sd(MH_N$N.b.coll.) 
+median(MH_C$C.b.coll.) 
+mean(MH_C$C.b.coll.)
+sd(MH_C$C.b.coll.)
+
+#Calculate the number of sites for the MH
+sites.MHN <- unique(MH_N$Site.ID)
+length(sites.MHN)
+sites.MHC <- unique(MH_C$Site.ID)
+length(sites.MHC)
+
+```
+
+Calculate mean, median, and standard deviation of Nitrogen and Carbon for the LIP
+```{r}
+
+median(LIP_N$N.b.coll.)
+mean(LIP_N$N.b.coll.)
+sd(LIP_N$N.b.coll.)
+median(LIP_C$C.b.coll.)
+mean(LIP_C$C.b.coll.)
+sd(LIP_C$C.b.coll.)
+
+#Calculate the number of sites for the LIP
+
+sites.LIPN <- unique(LIP_N$Site.ID)
+length(sites.LIPN)
+sites.LIPC <- unique(LIP_C$Site.ID)
+length(sites.LIPC)
+
+```
+
+Calculate mean, median, and standard deviation of Nitrogen and Carbon for the LH
+```{r}
+
+median(LH_N$N.b.coll.)
+mean(LH_N$N.b.coll.)
+sd(LH_N$N.b.coll.)
+median(LH_C$C.b.coll.)
+mean(LH_C$C.b.coll.)
+sd(LH_C$C.b.coll.)
+
+#Calculate the number of sites for the LH
+sites.LHN <- unique(LH_N$Site.ID)
+length(sites.LHN)
+sites.LHC <- unique(LH_C$Site.ID)
+length(sites.LHC)
+
+```
+
+Calculate mean, median, and standard deviation of Nitrogen and Carbon for all individuals
+```{r}
+median(dat.all.n$N.b.coll.)
+mean(dat.all.n$N.b.coll.)
+sd(dat.all.n$N.b.coll.)
+median(dat.all.c$C.b.coll.)
+mean(dat.all.c$C.b.coll.)
+sd(dat.all.c$C.b.coll.)
+
+#Calculate the number of sites
+sites.allN <- unique(dat.all.n$Site.ID)
+length(sites.allN)
+sites.allC <- unique(dat.all.c$Site.ID)
+length(sites.allC)
+
+```
+
+
+Plot histograms of individuals by elevation for each time period to look at the range of variation.
+
+Nitrogen
+```{r}
+
+par(pty = "s", mfrow = c(2,2))
+hist(EIP_N$elevation, main = "", xlab = "EIP Elevation (masl)")
+hist(MH_N$elevation, main = "", xlab = "MH Elevation (masl)")
+hist(LIP_N$elevation, main = "", xlab = "LIP Elevation (masl)")
+hist(LH_N$elevation, main = "", xlab = "LH Elevation (masl)")
+
+```
+\
+In general there are more low than middle and high elevation individuals in the data, but this varies by time period. 
+
+Carbon
+```{r}
+
+par(pty = "s", mfrow = c(2,2))
+hist(EIP_C$elevation, main = "", xlab = "EIP Elevation (masl)")
+hist(MH_C$elevation, main = "", xlab = "MH Elevation (masl)")
+hist(LIP_C$elevation, main = "", xlab = "LIP Elevation (masl)")
+hist(LH_C$elevation, main = "", xlab = "LH Elevation (masl)")
+
+```
+\
+In general there are more low than middle and high elevation individuals in the data, but this varies by time period. 
+
+```{r echo = FALSE, results = FALSE, message = FALSE, warning = FALSE, fig.show = 'hide'}
+dem <- raster("Peru_NorthChile_dem.tif")#read the new geotiff file in
+coasts <- st_read("C:/Users/Kurt/Box Sync/Peru Isotope Database/DEM/GSHHS_shp/h/GSHHS_h_L1.shp")#World Vector Shorelines (WVS) coastal file.
+WDBII <- st_read("WDBII_border_h_l1.shp")#Political boundaries.  #st_read function from sf package
+
+#Now crop the coasts and political boundary files so they are not so large.
+y <- extent(-85,-25,-25,5)#xmin, xmax, ymin, ymax 
+crop.coast <- st_crop(coasts, y)
+crop.wdbii <- st_crop(WDBII, y)
+
+
+sites <- dat.all[ !duplicated(dat.all$Site.ID),]#select one individual from each unique site. Use this for plotting and for jittering the site points.
+
+eip.sites <- sites[which(sites$Period=="Early Intermediate Period"),]
+mh.sites <- sites[which(sites$Period=="Middle Horizon"),]
+lip.sites <- sites[which(sites$Period=="Late Intermediate Period"),]
+lh.sites <- sites[which(sites$Period=="Late Horizon"),]
+
+
+png("Fig1.sites_map.png", width=8, height=8, units="in", res=300)
+par(oma=c(3,4,1,3))
+par(mfcol=c(2,2))
+par(mar=c(1.5,0,0.5,1))
+par(mgp=c(0,1,0))
+#par(oma=c(5,3,1,3))
+plot(dem, col = c("white", rev(gray.colors(10, start = 0))), xlim = c(-82, -66), legend = FALSE, xaxt="n")#plot the composite DEM with 0 values as white and elevation in greyscale from light (low) to dark (high)
+plot(crop.coast$geometry, add = T, lwd = 1.5)#plot the coastlines
+plot(crop.wdbii$geometry, add = T, lwd = 1.5)#plot political boundaries from the CIA database
+points(eip.sites$Longitude, eip.sites$Latitude, pch = 22, cex = 1.5, col = "black", bg = "transparent")#add the individuals to the map
+#mtext("MASL", side = 4, line = 2, at = -4, las = 1)
+text(x=-85, y =-24, "Early Intermediate Period", pos=4)
+mtext("Latitude", side = 2, line = 3, at = -19.75, adj = 2)
+maps::map.scale(x=-82.5, #map scale
+                y=-21, 
+                relwidth = 0.2,
+                metric = TRUE, 
+                ratio = FALSE, 
+                cex=.5
+                ) 
+north.arrow(xb=-83.5, yb=-21.85, len=0.4, lab="N", cex.lab=.7, col="black")  #north arrow
+
+plot(dem, col = c("white", rev(gray.colors(10, start = 0))), xlim = c(-82, -66), xaxt="n", yaxt = "n")#plot the composite DEM with 0 values as white and elevation in greyscale from light (low) to dark (high)
+plot(crop.coast$geometry, add = T, lwd = 1.5)#plot the coastlines
+plot(crop.wdbii$geometry, add = T, lwd = 1.5)#plot political boundaries from the CIA database
+points(mh.sites$Longitude, mh.sites$Latitude, pch = 22, cex = 1.5, col = "black", bg = "transparent")#add the individuals to the map
+mtext("MASL", side = 4, line = 1, at = -4, las = 1)
+text(x=-85, y =-24, "Middle Horizon", pos=4)
+maps::map.scale(x=-82.5, #map scale
+                y=-21, 
+                relwidth = 0.2,
+                metric = TRUE, 
+                ratio = FALSE, 
+                cex=.5
+                ) 
+north.arrow(xb=-83.5, yb=-21.85, len=0.4, lab="N", cex.lab=.7, col="black")  #north arrow
+
+plot(dem, col = c("white", rev(gray.colors(10, start = 0))), xlim = c(-82, -66), legend = FALSE)#plot the composite DEM with 0 values as white and elevation in greyscale from light (low) to dark (high)
+plot(crop.coast$geometry, add = T, lwd = 1.5)#plot the coastlines
+plot(crop.wdbii$geometry, add = T, lwd = 1.5)#plot political boundaries from the CIA database
+points(lip.sites$Longitude, lip.sites$Latitude, pch = 22, cex = 1.5, col = "black", bg = "transparent")#add the individuals to the map
+#mtext("MASL", side = 4, line = 2, at = -4, las = 1)
+text(x=-85, y =-24, "Late Intermediate Period", pos=4)
+maps::map.scale(x=-82.5, #map scale
+                y=-21, 
+                relwidth = 0.2,
+                metric = TRUE, 
+                ratio = FALSE, 
+                cex=.5
+                ) 
+north.arrow(xb=-83.5, yb=-21.85, len=0.4, lab="N", cex.lab=.7, col="black")  #north arrow
+
+plot(dem, col = c("white", rev(gray.colors(10, start = 0))), xlim = c(-82, -66), yaxt="n")#plot the composite DEM with 0 values as white and elevation in greyscale from light (low) to dark (high)
+plot(crop.coast$geometry, add = T, lwd = 1.5)#plot the coastlines
+plot(crop.wdbii$geometry, add = T, lwd = 1.5)#plot political boundaries from the CIA database
+points(lh.sites$Longitude, lh.sites$Latitude, pch = 22, cex = 1.5, col = "black", bg = "transparent")#add the individuals to the map
+mtext("MASL", side = 4, line = 1, at = -4, las = 1)
+text(x=-85, y =-24, "Late Horizon", pos=4)
+maps::map.scale(x=-82.5, #map scale
+                y=-21, 
+                relwidth = 0.2,
+                metric = TRUE, 
+                ratio = FALSE, 
+                cex=.5
+                ) 
+north.arrow(xb=-83.5, yb=-21.85, len=0.4, lab="N", cex.lab=.7, col="black")  #north arrow
+mtext("Longitude", side = 1, line = 3, at = -87.5, las = 1)
+
+
+
+dev.off()
+
+```
+Prep data for making Figure 2 - boxplots of isotope distribution by period
+```{r}
+dat.all.n.fc <- dat.all.n#make a new dataframe
+dat.all.n.fc$Period <- as.factor(dat.all.n.fc$Period)#make Period a factor level
+dat.all.c.fc <- dat.all.c
+dat.all.c.fc$Period <- as.factor(dat.all.c.fc$Period)
+```
+
+Make Figure 2 - Boxplot for variation by time period
+
+```{r}
+#png("Fig2.boxplots.png", width=8, height=8, units="in", res=300)
+par(pty="s", mfrow = c(1,2))
+boxplot(dat.all.n.fc$N.b.coll.~dat.all.n.fc$Period, xlab = "Period", ylab = expression({delta}^15*N~'\u2030'), xaxt = "n", ylim = c(5,30), col = viridis(4))
+axis(1, at = seq(1,4,1), labels = c("EIP", "MH", "LIP", "LH"))
+boxplot(dat.all.c.fc$C.b.coll.~dat.all.c.fc$Period, xlab = "Period", ylab = expression({delta}^13*C~'\u2030'), xaxt = "n", ylim = c(-25, -5), col = viridis(4))
+axis(1, at = seq(1,4,1), labels = c("EIP", "MH", "LIP", "LH"))
+#dev.off()
+```
+
+### Run the Analysis
+
+##### Autocorrelation
+First, check for cite autocorrelation as it may be reasonably expected that individuals at the same site would be more alike each other in terms of diet than they would be like individuals from other sites. If autocorrelation is present, this implies that site should be included in the statistical model as a random effect. We check for autocorrelation using Moran's I.
+```{r MoranI}
+
+#build a simple matrix indicating if corresponding individual is 
+#of the same site.id, 0 = same site.id
+site.dist.inv<-as.matrix(dist(as.numeric(dat.all$Site.ID)))
+
+#set all values below 1 to -1, indicating that they are the same site.id
+site.dist.inv[site.dist.inv < 1]<--1                
+#set all values above 1 to 0, indicating that they are not the same site.id
+site.dist.inv[site.dist.inv > 1]<-0                 
+#return negative values to 1, indicating that they are  the same site.id
+site.dist.inv[site.dist.inv < 0]<-1                  
+
+#calculate global Moran's I for nitrogen 
+data.frame("Site" = round(unlist(c(Moran.I(dat.all$N.b.coll., site.dist.inv, na.rm=T))), 4))
+
+#calculate global Moran's I for carbon 
+data.frame("Site" = round(unlist(c(Moran.I(dat.all$C.b.coll., site.dist.inv, na.rm=T))), 4))
+
+
+```
+
+There is significant autocorrelation in the response variables, indicating that individuals at the same site are more like one another than expected by chance. This is therefore controlled for in the GAM by including site.id as a random effect.
+
+##### Collinearity and GAM Statistical Analyses
+We expect most of the environmental variables to be linearly related to dietary measures. Because of this we keep these measures in the parametric portion of the GAMs. Doing so (keeping parametric) essentially makes the knots=1 (relationship can only vary in 1 direction). This also means that what we want to check for is collinearity among the predictors. However, we do want elevation to be able to vary more than once. This is because we would expect coastal signatures (marine) and high elevation (camelid herding) to have higher N values whereas mid-elevations may have lower ones. Therefore elevations needs to be made a smoothed term (which allows for more than one change in direction of variation). To check for collinearity we generate a correlation matrix of predictor variables. Any variables with a correlation coefficient above 0.7 may distort model estimation and will require removal of one of the variables - correlation coefficients under 0.7 are not likely to distort model estimation (Dormann et al 2013).
+
+
+##### Generalized Additive Models (GAMs)
+EIP
+Check for collinearity problems among the EIP individuals with Nitrogen values
+```{r eip n collinearity}
+#before calculate this reduce dataset to only those with N or C
+EIP_N <- subset(dat.eip, !is.na(dat.eip$N.b.coll.))#leave out individuals with NA for N bone coll
+
+EIP_N <- EIP_N[order(-EIP_N$Start.BP),]
+
+
+#Create a function for identifying collinearity among variables
+cor.mtest <- function(mat) {
+    mat <- as.matrix(mat)
+    n <- ncol(mat)
+    p.mat<- matrix(NA, n, n)
+    diag(p.mat) <- 0
+    for (i in 1:(n - 1)) {
+        for (j in (i + 1):n) {
+            tmp <- cor.test(mat[, i], mat[, j])
+            p.mat[i, j] <- p.mat[j, i] <- tmp$p.value
+        }
+    }
+  colnames(p.mat) <- rownames(p.mat) <- colnames(mat)
+  p.mat
+}
+
+
+#build a data frame of predictor variables
+EIP_AllVars_Pred<-with(EIP_N, 
+             data.frame(
+                    dist2coast, #Distance to the Coast (m)
+                    Temp_Mean, #Mean Temperature (c)
+                    elevation, #Elevation above sea level (masl)
+                    Precip_Mean, #Mean Precipitation (mm)
+                    Temp_Mean_Seasonality, #Mean seasonality of temperature over the year
+                    Precip_Mean_Seasonality #Mean seasonality of precipitation over the year
+             )
+           )
+
+#then test collinearity
+cm<- cor(EIP_AllVars_Pred,
+         method="pearson",
+         use="pairwise.complete.obs")
+
+
+# matrix of the p-value of the correlation
+p.mat<-cor.mtest(EIP_AllVars_Pred)
+
+#plot the correlation matrix
+corrplot(cm,
+      method="color",
+      type="upper",
+      diag=FALSE,
+      bg="grey90",
+      addCoef.col = "black",
+      tl.col="black",
+      outline = FALSE,
+      addCoefasPercent=TRUE,
+      p.mat = p.mat, sig.level = 0.05, insig = "blank"
+  )
+
+
+```
+\
+Elevation and dist2coast are highly correlated (>0.70) and therefore including both is problematic. We drop distance 2 coast in favor of elevation because elevation more directly relates to the natural zones (Pulgar Vidal 1981) than dist2coast. All other variables are < 0.70 in the collinearity matrix and therefore are fine to include in the model.
+
+Then run the GAM for EIP individuals with Nitrogen values
+```{r eip n gam}
+
+#Construct the GAM
+#Note: Lat/Long are not included because doing so doesn't change the deviance explained but removes all of the variance explained by the environmental variables (in essence all of the climatic variables are correlated with lat/long so we drop lat/long in favor of exploring the individual environmental measures). Site.ID is included due to the demonstrated autocorrelation.
+
+EIP.par.gam <- gam(N.b.coll.~ + s(Site.ID, bs = "re") + s(elevation)  + Temp_Mean  + Precip_Mean + Temp_Mean_Seasonality + Precip_Mean_Seasonality, 
+                     family = gaussian(link = "identity"),
+                     method = "REML",
+                     data=EIP_N[order(-EIP_N$Start.BP),]
+                    )
+
+```
+
+Check the residuals
+```{r}
+#check model residuals
+par(pty='s')
+hist(residuals(EIP.par.gam, type = "response"), main = NA, xlab = "Model Residuals", col = "grey80")
+#residuals look good
+```
+\
+The residuals are normally distributed around 0
+
+Check for adequate smoothing of elevation
+```{r}
+k.check(EIP.par.gam)
+```
+Elevation is adequately smoothed.
+
+Check for overdispersion
+```{r}
+#check overdispersion
+sum(residuals(EIP.par.gam, type = "pearson")^2) / df.residual(EIP.par.gam)
+```
+Overdispersion is not too strong.
+
+Run the GAM summary for results
+```{r}
+summary(EIP.par.gam)
+```
+
+Check for collinearity problems among the EIP individuals with Carbon values
+```{r eip c collinearity}
+#before calculate this reduce dataset to only those with N or C
+EIP_C <- subset(dat.eip, !is.na(dat.eip$C.b.coll.))#leave out individuals with NA for C bone coll
+
+#build a data frame of predictor variables
+EIPC_AllVars_Pred<-with(EIP_C, 
+             data.frame(
+                    dist2coast, #Distance to the Coast (m)
+                    Temp_Mean, #Mean Temperature (c)
+                    elevation, #Elevation above sea level (masl)
+                    Precip_Mean, #Mean Precipitation (mm)
+                    Temp_Mean_Seasonality, #Mean seasonality of temperature over the year
+                    Precip_Mean_Seasonality #Mean seasonality of precipitation over the year
+             )
+           )
+
+#then test collinearity
+cm<- cor(EIPC_AllVars_Pred,
+         method="pearson",
+         use="pairwise.complete.obs")
+
+
+# matrix of the p-value of the correlation
+p.mat<-cor.mtest(EIPC_AllVars_Pred)
+
+#plot the correlation matrix
+corrplot(cm,
+      method="color",
+      type="upper",
+      diag=FALSE,
+      bg="grey90",
+      addCoef.col = "black",
+      tl.col="black",
+      outline = FALSE,
+      addCoefasPercent=TRUE,
+      p.mat = p.mat, sig.level = 0.05, insig = "blank"
+  )
+
+```
+\
+Elevation and dist2coast are highly correlated (>0.70) and therefore including both is problematic. We drop distance 2 coast in favor of elevation. All other variables are < 0.70 in the collinearity matrix and therefore are fine to include in the model.
+
+Run the GAM for individuals with carbon values
+```{r eip c gam}
+
+EIPC.gam <- gam(C.b.coll.~ s(Site.ID, bs = "re") + Temp_Mean + s(elevation) + Precip_Mean + Temp_Mean_Seasonality + Precip_Mean_Seasonality,
+                     family = gaussian(link = "identity"),
+                     method = "REML",
+                     data=EIP_C[order(-EIP_C$Start.BP),]
+                    )
+```
+
+Check model residuals
+```{r}
+par(pty='s')
+hist(residuals(EIPC.gam, type = "response"), main = NA, xlab = "Model Residuals", col = "grey80")
+```
+\
+The residuals are mostly normally distributed around 0.
+
+Check to see if elevation is adequately smoothed
+```{r}
+k.check(EIPC.gam)
+```
+Elevation is adequately smoothed
+
+Check for overdispersion
+```{r}
+sum(residuals(EIPC.gam, type = "pearson")^2) / df.residual(EIPC.gam)
+```
+Residuals are not overdispersed
+
+Run the GAM summary for results
+```{r}
+summary(EIPC.gam)
+```
+
+
+5.8B Middle Horizon
+
+Check for collinearity problems among the MH individuals with Nitrogen values
+```{r mh n collinearity}
+#before calculate this reduce dataset to only those with N or C
+MH_N <- subset(dat.mh, !is.na(dat.mh$N.b.coll.))#leave out individuals with NA for N bone coll
+
+
+#build a data frame of predictor variables
+MHN_AllVars_Pred<-with(MH_N, 
+             data.frame(
+                    dist2coast, #Distance to the Coast (m)
+                    Temp_Mean, #Mean Temperature (c)
+                    elevation, #Elevation above sea level (masl)
+                    Precip_Mean, #Mean Precipitation (mm)
+                    Temp_Mean_Seasonality, #Mean seasonality of temperature over the year
+                    Precip_Mean_Seasonality #Mean seasonality of precipitation over the year
+             )
+           )
+
+#then test collinearity
+cm<- cor(MHN_AllVars_Pred,
+         method="pearson",
+         use="pairwise.complete.obs")
+
+
+# matrix of the p-value of the correlation
+p.mat<-cor.mtest(MHN_AllVars_Pred)
+
+#plot the correlation matrix
+corrplot(cm,
+      method="color",
+      type="upper",
+      diag=FALSE,
+      bg="grey90",
+      addCoef.col = "black",
+      tl.col="black",
+      outline = FALSE,
+      addCoefasPercent=TRUE,
+      p.mat = p.mat, sig.level = 0.05, insig = "blank"
+  )
+
+```
+\
+Elevation and dist2coast are highly correlated (>0.70) and therefore including both is problematic. We drop distance 2 coast in favor of elevation. Precip_Mean and Precip_Seasonality are also correlated >0.70. We drop Precip_Seasonality as a model with Precip_Mean outperforms the model with Precip_Seasonality based on AIC and we expect mean precipitation to be a more important factor in the underlying resource distributions.
+
+Run the GAM for MH Nitrogen
+```{r mh n gam}
+
+MHNgam <- gam(N.b.coll.~ s(Site.ID, bs = "re") + Temp_Mean + s(elevation) + Precip_Mean + Temp_Mean_Seasonality,
+                     family = gaussian(link = "identity"),
+                     method = "REML",
+                     data=MH_N[order(-MH_N$Start.BP),]
+                    )
+
+```
+
+Check model residuals
+```{r}
+par(pty='s')
+hist(residuals(MHNgam, type = "response"), main = NA, xlab = "Model Residuals", col = "grey80")
+```
+\
+Residuals are normally distributed around 0
+
+Check to see if elevation is adequately smoothed
+```{r}
+k.check(MHNgam)
+```
+Elevation is adequately smoothed.
+
+Check for overdispersion
+```{r}
+sum(residuals(MHNgam, type = "pearson")^2) / df.residual(MHNgam)
+```
+The model residuals are not overdispersed
+
+Run the GAM summary for results
+```{r}
+summary(MHNgam)
+```
+
+Check for collinearity problems among the MH individuals with Carbon values
+```{r mh c collinearity}
+#before calculate this reduce dataset to only those with N or C
+MH_C <- subset(dat.mh, !is.na(dat.mh$C.b.coll.))#leave out individuals with NA for C bone coll
+
+
+#build a data frame of predictor variables
+MHC_AllVars_Pred<-with(MH_C, 
+             data.frame(
+                    dist2coast, #Distance to the Coast (m)
+                    Temp_Mean, #Mean Temperature (c)
+                    elevation, #Elevation above sea level (masl)
+                    Precip_Mean, #Mean Precipitation (mm)
+                    Temp_Mean_Seasonality, #Mean seasonality of temperature over the year
+                    Precip_Mean_Seasonality #Mean seasonality of precipitation over the year
+             )
+           )
+
+#then test collinearity
+cm<- cor(MHC_AllVars_Pred,
+         method="pearson",
+         use="pairwise.complete.obs")
+
+
+# matrix of the p-value of the correlation
+p.mat<-cor.mtest(MHC_AllVars_Pred)
+
+#plot the correlation matrix
+corrplot(cm,
+      method="color",
+      type="upper",
+      diag=FALSE,
+      bg="grey90",
+      addCoef.col = "black",
+      tl.col="black",
+      outline = FALSE,
+      addCoefasPercent=TRUE,
+      p.mat = p.mat, sig.level = 0.05, insig = "blank"
+  )
+
+```
+\
+Elevation and dist2coast are highly correlated (>0.70) and therefore including both is problematic. We drop distance 2 coast in favor of elevation. Precip_Mean and Precip_Seasonality are also >0.70. We drop Precip_Seasonality as a model with Precip_Mean outperforms the model with Precip_Seasonality based on AIC and we expect mean precipitation to be a more important factor in the underlying resource distributions.
+
+Run the MH GAM for Carbon
+```{r mh c gam}
+
+MHC.gam <- gam(C.b.coll.~ s(Site.ID, bs = "re") + Temp_Mean + s(elevation) + Precip_Mean + Temp_Mean_Seasonality,
+                     family = gaussian(link = "identity"),
+                     method = "REML",
+                     data=MH_C[order(-MH_C$Start.BP),]
+                    )
+```
+
+Check model residuals
+```{r}
+par(pty='s')
+hist(residuals(MHC.gam, type = "response"), main = NA, xlab = "Model Residuals", col = "grey80")
+```
+\
+Residuals are normally distributed around 0
+
+Check to see if elevation is adequately smoothed
+```{r}
+k.check(MHC.gam)
+```
+Elevation could be smoothed further, but changing the knots does not improve this. For the sake of comparison, we keep elevation as is so that this model may be directly compared with all others.
+
+Check for overdispersion
+```{r}
+sum(residuals(MHC.gam, type = "pearson")^2) / df.residual(MHC.gam)
+```
+The residuals are not overdispersed
+
+Run GAM summary for results
+```{r}
+summary(MHC.gam)
+```
+
+5.8C Late Intermediate Period (LIP)
+
+Check for collinearity problems among the LIP individuals with Nitrogen values
+```{r lip n collinearity}
+#before calculate this reduce dataset to only those with N or C
+LIP_N <- subset(dat.lip, !is.na(dat.lip$N.b.coll.))#leave out individuals with NA for N bone coll
+
+#build a data frame of predictor variables
+LIPN_AllVars_Pred<-with(LIP_N, 
+             data.frame(
+                    dist2coast, #Distance to the Coast (m)
+                    Temp_Mean, #Mean Temperature (c)
+                    elevation, #Elevation above sea level (masl)
+                    Precip_Mean, #Mean Precipitation (mm)
+                    Temp_Mean_Seasonality, #Mean seasonality of temperature over the year
+                    Precip_Mean_Seasonality #Mean seasonality of precipitation over the year
+             )
+           )
+
+#then test collinearity
+cm<- cor(LIPN_AllVars_Pred,
+         method="pearson",
+         use="pairwise.complete.obs")
+
+
+# matrix of the p-value of the correlation
+p.mat<-cor.mtest(LIPN_AllVars_Pred)
+
+#plot the correlation matrix
+corrplot(cm,
+      method="color",
+      type="upper",
+      diag=FALSE,
+      bg="grey90",
+      addCoef.col = "black",
+      tl.col="black",
+      outline = FALSE,
+      addCoefasPercent=TRUE,
+      p.mat = p.mat, sig.level = 0.05, insig = "blank"
+  )
+
+```
+\
+Elevation and dist2coast are highly correlated (>0.70) and therefore including both is problematic. We drop distance 2 coast in favor of elevation. Precip_Mean and Temp_Seasonality are also >0.70. We drop Temp_Seasonality as a model with Precip_Mean outperforms the model with Temp_Seasonality based on AIC and we expect mean precipitation to be a more important factor in the underlying resource distributions.
+
+Run the LIP Nitrogen GAM
+```{r lip n gam}
+
+LIPNgam <- gam(N.b.coll.~ s(elevation) + Precip_Mean  + Precip_Mean_Seasonality +s(Site.ID, bs = "re"),
+                     family = gaussian(link = "identity"),
+                     method = "REML",
+                     data=LIP_N[order(-LIP_N$Start.BP),]
+                    )
+```
+
+Check model residuals
+```{r}
+par(pty='s')
+hist(residuals(LIPNgam, type = "response"), main = NA, xlab = "Model Residuals", col = "grey80")
+```
+\
+Residuals are normally distributed around 0
+
+Check to see if elevation is adequately smoothed
+```{r}
+k.check(LIPNgam)
+```
+Elevation is adequately smoothed
+
+Check for overdispersion
+```{r}
+sum(residuals(LIPNgam, type = "pearson")^2) / df.residual(LIPNgam)
+```
+The model is not overdispersed
+
+Run GAM summary for results
+```{r}
+summary(LIPNgam)
+```
+
+Check for collinearity problems among the LIP individuals with Carbon values
+```{r lip c collinearity}
+#before calculate this reduce dataset to only those with N or C
+LIP_C <- subset(dat.lip, !is.na(dat.lip$C.b.coll.))#leave out individuals with NA for C bone coll
+
+#build a data frame of predictor variables
+LIPC_AllVars_Pred<-with(LIP_C, 
+             data.frame(
+                    dist2coast, #Distance to the Coast (m)
+                    Temp_Mean, #Mean Temperature (c)
+                    elevation, #Elevation above sea level (masl)
+                    Precip_Mean, #Mean Precipitation (mm)
+                    Temp_Mean_Seasonality, #Mean seasonality of temperature over the year
+                    Precip_Mean_Seasonality #Mean seasonality of precipitation over the year
+             )
+           )
+
+#then test collinearity
+cm<- cor(LIPC_AllVars_Pred,
+         method="pearson",
+         use="pairwise.complete.obs")
+
+
+# matrix of the p-value of the correlation
+p.mat<-cor.mtest(LIPC_AllVars_Pred)
+
+#plot the correlation matrix
+corrplot(cm,
+      method="color",
+      type="upper",
+      diag=FALSE,
+      bg="grey90",
+      addCoef.col = "black",
+      tl.col="black",
+      outline = FALSE,
+      addCoefasPercent=TRUE,
+      p.mat = p.mat, sig.level = 0.05, insig = "blank"
+  )
+
+```
+\
+Elevation and dist2coast are highly correlated (>0.70) and therefore including both is problematic. We drop distance 2 coast in favor of elevation. Precip_Mean and Precip_Seasonality are also >0.70. We drop Precip_Seasonality as a model with Precip_Mean outperforms the model with Precip_Seasonality based on AIC and we expect mean precipitation to be a more important factor in the underlying resource distributions. For the same reason we drop Temp_Mean_Seasonality which is highly correlated with Precip_Mean (>0.70). 
+
+Run the LIP Carbon GAM
+```{r lip c gam}
+
+LIPC.gam <- gam(C.b.coll.~ s(elevation) + Precip_Mean + Precip_Mean_Seasonality +s(Site.ID, bs = "re"),
+                     family = gaussian(link = "identity"),
+                     method = "REML",
+                     data=LIP_C[order(-LIP_C$Start.BP),]
+                    )
+```
+
+Check model residuals
+```{r}
+par(pty='s')
+hist(residuals(LIPC.gam, type = "response"), main = NA, xlab = "Model Residuals", col = "grey80")
+```
+\
+There is slight skew, but generally the residuals are normally distributed around 0
+
+Check for adequate smoothing of elevation
+```{r}
+k.check(LIPC.gam)
+```
+Elevation is adequately smoothed
+
+Check for overdispersion
+```{r}
+sum(residuals(LIPC.gam, type = "pearson")^2) / df.residual(LIPC.gam)
+```
+Model residuals are not overdispersed
+
+Run GAM summary for results
+```{r}
+summary(LIPC.gam)
+```
+
+
+5.8D Late Horizon (LH)
+
+Check for collinearity problems among the LH individuals with Nitrogen values
+```{r lh n collinearity}
+#before calculate this reduce dataset to only those with N or C
+LH_N <- subset(dat.lh, !is.na(dat.lh$N.b.coll.))#leave out individuals with NA for N bone coll
+
+
+#build a data frame of predictor variables
+LHPN_AllVars_Pred<-with(LH_N, 
+             data.frame(
+                    dist2coast, #Distance to the Coast (m)
+                    Temp_Mean, #Mean Temperature (c)
+                    elevation, #Elevation above sea level (masl)
+                    Precip_Mean, #Mean Precipitation (mm)
+                    Temp_Mean_Seasonality, #Mean seasonality of temperature over the year
+                    Precip_Mean_Seasonality #Mean seasonality of precipitation over the year
+             )
+           )
+
+#then test collinearity
+cm<- cor(LHPN_AllVars_Pred,
+         method="pearson",
+         use="pairwise.complete.obs")
+
+
+# matrix of the p-value of the correlation
+p.mat<-cor.mtest(LHPN_AllVars_Pred)
+
+#plot the correlation matrix
+corrplot(cm,
+      method="color",
+      type="upper",
+      diag=FALSE,
+      bg="grey90",
+      addCoef.col = "black",
+      tl.col="black",
+      outline = FALSE,
+      addCoefasPercent=TRUE,
+      p.mat = p.mat, sig.level = 0.05, insig = "blank"
+  )
+
+
+
+```
+\
+Elevation and dist2coast are highly correlated (>0.70) and therefore including both is problematic. We drop distance 2 coast in favor of elevation . Precip_Mean_Seasonality and Temp_Mean_Seasonality are also >0.70. We drop Precip_Seasonality for comparability, in all other periods where predictor variables are dropped precip_mean_seasonality is among those removed and we do so again here.
+
+Run LH nitrogen GAM
+```{r lh n gam}
+
+LHNgam <- gam(N.b.coll.~ Temp_Mean + s(elevation, k = 3) +Precip_Mean + Temp_Mean_Seasonality +s(Site.ID, bs = "re"),
+                     family = gaussian(link = "identity"),
+                     method = "REML",
+                     data=LH_N[order(-LH_N$Start.BP),]
+                    )
+```
+
+Check model residuals
+```{r}
+par(pty='s')
+hist(residuals(LHNgam, type = "response"), main = NA, xlab = "Model Residuals", col = "grey80")
+```
+\
+There is slight skew, but the residuals are mostly normally distributed around 0
+
+Check if elevation is adequately smoothed
+```{r}
+k.check(LHNgam)
+```
+Elevation is adequately smoothed
+
+Check for overdispersion
+```{r}
+sum(residuals(LHNgam, type = "pearson")^2) / df.residual(LHNgam)
+```
+Residuals are not overdispersed
+
+Run GAM summary for results
+```{r}
+summary(LHNgam)
+```
+
+Check for collinearity problems among the LH individuals with Carbon values
+```{r lh c collinearity}
+#before calculate this reduce dataset to only those with N or C
+LH_C <- subset(dat.lh, !is.na(dat.lh$C.b.coll.))#leave out individuals with NA for C bone coll
+
+
+#build a data frame of predictor variables
+LHC_AllVars_Pred<-with(LH_C, 
+             data.frame(
+                    dist2coast, #Distance to the Coast (m)
+                    Temp_Mean, #Mean Temperature (c)
+                    elevation, #Elevation above sea level (masl)
+                    Precip_Mean, #Mean Precipitation (mm)
+                    Temp_Mean_Seasonality, #Mean seasonality of temperature over the year
+                    Precip_Mean_Seasonality #Mean seasonality of precipitation over the year
+             )
+           )
+
+
+#then test collinearity
+cm<- cor(LHC_AllVars_Pred,
+         method="pearson",
+         use="pairwise.complete.obs")
+
+
+# matrix of the p-value of the correlation
+p.mat<-cor.mtest(LHC_AllVars_Pred)
+
+#plot the correlation matrix
+corrplot(cm,
+      method="color",
+      type="upper",
+      diag=FALSE,
+      bg="grey90",
+      addCoef.col = "black",
+      tl.col="black",
+      outline = FALSE,
+      addCoefasPercent=TRUE,
+      p.mat = p.mat, sig.level = 0.05, insig = "blank"
+  )
+```
+\
+Elevation and dist2coast are highly correlated (>0.70) and therefore including both is problematic. We drop distance 2 coast in favor of elevation. Precip_Mean_Seasonality and Temp_Mean_Seasonality are also >0.70. We drop Precip_Seasonality for comparability, in all other periods where predictor variables are dropped precip_mean_seasonality is among those removed and we do so again here.
+
+Run the LH Carbon GAM
+```{r lh c gam}
+
+
+LHC.gam <- gam(C.b.coll.~ Temp_Mean + s(elevation, k = 3) +Precip_Mean + Temp_Mean_Seasonality +s(Site.ID, bs = "re"),
+                     family = gaussian(link = "identity"),
+                     method = "REML",
+                     data=LH_C[order(-LH_C$Start.BP),]
+                    )
+```
+
+Check model residuals
+```{r}
+par(pty='s')
+hist(residuals(LHC.gam, type = "response"), main = NA, xlab = "Model Residuals", col = "grey80")
+```
+\
+Residuals are normally distributed around 0
+
+Check for adequate smoothing of elevation
+```{r}
+k.check(LHC.gam)
+```
+Elevation could be smoothed further, but changing the knots does not improve this. For the sake of comparison, we keep elevation as is so that this model may be directly compared with all others.
+
+Check for overdispersion
+```{r}
+sum(residuals(LHC.gam, type = "pearson")^2) / df.residual(LHC.gam)
+```
+Residuals are not overdispersed
+
+Run GAM summary for results
+```{r}
+summary(LHC.gam)
+```
+
+
+
+Run a complete model with all individuals
+
+Check for collinearity problems among the individuals with Nitrogen values
+```{r all n collinearity}
+#before calculate this reduce dataset to only those with N or C
+dat_N <- subset(dat.all, !is.na(dat.all$N.b.coll.))#leave out individuals with NA for N bone coll
+
+#Create a function for identifying collinearity among variables
+cor.mtest <- function(mat) {
+    mat <- as.matrix(mat)
+    n <- ncol(mat)
+    p.mat<- matrix(NA, n, n)
+    diag(p.mat) <- 0
+    for (i in 1:(n - 1)) {
+        for (j in (i + 1):n) {
+            tmp <- cor.test(mat[, i], mat[, j])
+            p.mat[i, j] <- p.mat[j, i] <- tmp$p.value
+        }
+    }
+  colnames(p.mat) <- rownames(p.mat) <- colnames(mat)
+  p.mat
+}
+
+
+#build a data frame of predictor variables
+dat_AllVars_Pred<-with(dat_N, 
+             data.frame(
+                    dist2coast, #Distance to the Coast (m)
+                    Temp_Mean, #Mean Temperature (c)
+                    elevation, #Elevation above sea level (masl)
+                    Precip_Mean, #Mean Precipitation (mm)
+                    Temp_Mean_Seasonality, #Mean seasonality of temperature over the year
+                    Precip_Mean_Seasonality #Mean seasonality of precipitation over the year
+             )
+           )
+
+#then test collinearity
+cm<- cor(dat_AllVars_Pred,
+         method="pearson",
+         use="pairwise.complete.obs")
+
+
+# matrix of the p-value of the correlation
+p.mat<-cor.mtest(dat_AllVars_Pred)
+
+#plot the correlation matrix
+corrplot(cm,
+      method="color",
+      type="upper",
+      diag=FALSE,
+      bg="grey90",
+      addCoef.col = "black",
+      tl.col="black",
+      outline = FALSE,
+      addCoefasPercent=TRUE,
+      p.mat = p.mat, sig.level = 0.05, insig = "blank"
+  )
+```
+\
+Elevation and dist2coast are highly correlated (>0.70) and therefore including both is problematic. We drop distance 2 coast in favor of elevation. All other variables are < 0.70 in the collinearity matrix and therefore are fine to include in the model.
+
+Run the GAM for all individuals with Nitrogen
+```{r all n gam}
+
+dat_N$Site.ID <- as.factor(dat_N$Site.ID)
+
+dat.par.gam <- gam(N.b.coll.~ Temp_Mean + s(elevation) + Precip_Mean + Temp_Mean_Seasonality + Precip_Mean_Seasonality +s(Site.ID, bs = "re"),
+                     family = gaussian(link = "identity"),
+                     method = "REML",
+                     data=dat_N[order(-dat_N$Start.BP),]
+                    )
+```
+
+Check model residuals
+```{r}
+par(pty='s')
+hist(residuals(dat.par.gam, type = "response"), main = NA, xlab = "Model Residuals", col = "grey80")
+```
+\
+Residuals are normally distributed around 0
+
+Check for adequate smoothing of elevation
+```{r}
+k.check(dat.par.gam)
+```
+Elevation could be smoothed further, but we elect to retain consistency with the other models.
+
+Check for overdispersion
+```{r}
+sum(residuals(dat.par.gam, type = "pearson")^2) / df.residual(dat.par.gam)
+```
+Model residuals are not overdispersed
+
+Run GAM summary for results
+```{r}
+summary(dat.par.gam)
+
+```
+
+Check for collinearity problems among the individuals with Carbon values
+```{r all c collinearity}
+#before calculate this reduce dataset to only those with N or C
+dat_C <- subset(dat.all, !is.na(dat.all$C.b.coll.))#leave out individuals with NA for C bone coll
+
+
+#build a data frame of predictor variables
+datC_AllVars_Pred<-with(dat_C, 
+             data.frame(
+                    dist2coast, #Distance to the Coast (m)
+                    Temp_Mean, #Mean Temperature (c)
+                    elevation, #Elevation above sea level (masl)
+                    Precip_Mean, #Mean Precipitation (mm)
+                    Temp_Mean_Seasonality, #Mean seasonality of temperature over the year
+                    Precip_Mean_Seasonality #Mean seasonality of precipitation over the year
+             )
+           )
+
+#then test collinearity
+cm<- cor(datC_AllVars_Pred,
+         method="pearson",
+         use="pairwise.complete.obs")
+
+
+# matrix of the p-value of the correlation
+p.mat<-cor.mtest(datC_AllVars_Pred)
+
+#plot the correlation matrix
+corrplot(cm,
+      method="color",
+      type="upper",
+      diag=FALSE,
+      bg="grey90",
+      addCoef.col = "black",
+      tl.col="black",
+      outline = FALSE,
+      addCoefasPercent=TRUE,
+      p.mat = p.mat, sig.level = 0.05, insig = "blank"
+  )
+```
+\
+Elevation and dist2coast are highly correlated (>0.70) and therefore including both is problematic. We drop distance 2 coast in favor of elevation. All other variables are < 0.70 in the collinearity matrix and therefore are fine to include in the model.
+
+Run the GAM for all individuals with Carbon
+```{r all c gam}
+dat_C$Site.ID <- as.factor(dat_C$Site.ID)
+
+datC.gam <- gam(C.b.coll.~ Temp_Mean + s(elevation) + Precip_Mean + Temp_Mean_Seasonality + Precip_Mean_Seasonality +s(Site.ID, bs = "re"),
+                     family = gaussian(link = "identity"),
+                     method = "REML",
+                     data=dat_C[order(-dat_C$Start.BP),]
+                    )
+```
+
+Check model residuals
+```{r}
+par(pty='s')
+hist(residuals(datC.gam, type = "response"), main = NA, xlab = "Model Residuals", col = "grey80")
+```
+\
+Residuals are normally distributed around 0
+
+Check for adequate smoothing of elevation
+```{r}
+k.check(datC.gam)
+```
+Elevation could be smoothed further, but changing the knots does not improve this. For the sake of comparison, we keep elevation as is so that this model may be directly compared with all others.
+
+Check for overdispersion
+```{r}
+sum(residuals(datC.gam, type = "pearson")^2) / df.residual(datC.gam)
+```
+Model residuals are not overdispersed
+
+Run GAM summary for results
+```{r}
+summary(datC.gam)
+```
+
+ Make Figure 3 - comparison of deviances explained
+```{r barplot}
+
+#take the amount of the deviance explained for each time period and put it in a table
+n.table <- data.frame(period=c("EIP", "MH", "LIP", "LH"), dev.ex=c(92.3, 72.3, 65.8, 89.7))
+n.table
+
+c.table <- data.frame(period=c("EIP", "MH", "LIP", "LH"), dev.ex=c(88.9, 58.0, 55.0, 45.9))
+c.table
+
+#png("Fig3.model_deviance_exp.png", width=8, height=8, units="in", res=300)
+par(pty="s", mfrow=c(1,2), mar=c(5.1, 5.1, 4.1, 1.1), xpd=TRUE)
+nbp <- barplot(n.table$dev.ex, ylim = c(0, 100), ylab = "Amount Explained", col=viridis(4), xlab = "", names.arg=c("EIP", "MH", "LIP", "LH"), density = c(50, 100, 100, 50), angle = c(45, 135, 45, 135))
+text(x=nbp, y=n.table$dev.ex, label = c("92.3%", "72.3%", "65.8%", "89.7%"), pos = 3, cex= 0.75)
+text(x=2.5, y=110, label=expression({delta}^15*N~'\u2030'))
+
+par(mar=c(5.1, 1.1, 4.1, 5.1))
+cbp <- barplot(c.table$dev.ex, ylim = c(0, 100), ylab = "", col=viridis(4), xlab = "", names.arg=c("EIP", "MH", "LIP", "LH"), density = c(50, 100, 100, 50), angle = c(45, 135, 45, 135))
+text(x=cbp, y=c.table$dev.ex, label = c("88.9%", "58.0%", "55.0%", "45.9%"), pos = 3, cex= 0.75)
+text(x=2.5, y=110, label=expression({delta}^13*C~'\u2030'))
+
+mtext("Time Period", side = 1, line = 3, at = -.5)
+
+#dev.off()
+
+#reduce mar of right side in left plot and left side in right plot (equal amount) by using par for each of them.
+```
+
+
+Create objects with residuals for stripchart plotting
+```{r}
+
+Nitrogen.resids <- data.frame(cbind(residuals(EIP.par.gam, type = "response"), residuals(MHNgam, type = "response"), residuals(LIPNgam, type = "response"), residuals(LHNgam, type = "response")))
+colnames(Nitrogen.resids) <- c("EIP", "MH", "LIP", "LH")
+
+Carbon.resids <- data.frame(cbind(residuals(EIPC.gam, type = "response"), residuals(MHC.gam, type = "response"), residuals(LIPC.gam, type = "response"), residuals(LHC.gam, type = "response")))
+colnames(Carbon.resids) <- c("EIP", "MH", "LIP", "LH")
+```
+
+Make Figure 4 - distribution of residuals
+```{r}
+
+#png("Fig4.model_residuals.png", width=8, height=8, units="in", res=300)
+par(pty = "s", mfrow = c(1,2), bty = 'n')
+stripchart(Nitrogen.resids, group.names = c("EIP", "MH", "LIP", "LH"), vertical = TRUE, col=viridis(4), ylab = "Nitrogen Model Residuals", ylim = c(-10,10))
+#boxplot(Nitrogen.resids, xlab = "Period", ylab = "Residuals", xaxt = "n")
+axis(1, at = seq(1,4,1), labels = c("EIP", "MH", "LIP", "LH"))
+
+stripchart(Carbon.resids, group.names = c("EIP", "MH", "LIP", "LH"), vertical = TRUE, col=viridis(4), ylab = "Carbon Model Residuals", ylim = c(-10,10))
+#boxplot(Carbon.resids, xlab = "Period", ylab = "Residuals", xaxt = "n")
+axis(1, at = seq(1,4,1), labels = c("EIP", "MH", "LIP", "LH"))
+mtext("Time Period", side = 1, line = 3, at = 0)
+#dev.off()
+```
+
+
+
+
+
+References
+Dormann, Carsten F., Jane Elith, Sven Bacher, Carsten Buchmann, Gudrun Carl, Gabriel Carre, Jaime R. Garcia Marquez et al. (2013). Collinearity: a review of methods to deal with it and a simulation study evaluating their performance. *Ecography* 36: 27-46.
+
+Pulgar Vidal, J., (1981). Geografía del Perú: Las ocho regiones naturales del Perú, 8th ed., Editorial Universo, Lima, Peru.
+
+Wilson, Kurt M., McCool, Weston C., Brewer, Simon C., Zamora-Wilson Nicole, Schryver, Percy J., Lamson, Roxanne Lois F., Huggard, Ashlyn M., Brenner Coltrain, Joan, Contreras, Daniel A., Codding, Brian F. Climate, not Population Size, is the Primary Influence of Homogenizing Dietary Variation in the Prehispanic Central Andes. Submitted to *Science Advances* (2021).
